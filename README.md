@@ -109,13 +109,6 @@ A comprehensive review management system for Flex Living properties built with N
 
    Navigate to [http://localhost:3000](http://localhost:3000)
 
-## Default Credentials
-
-After seeding, you can log in with:
-
-- **Email**: manager@flexliving.com
-- **Password**: password123
-
 ## Project Structure
 
 ```
