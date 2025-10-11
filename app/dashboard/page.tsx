@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useAction } from "next-safe-action/hooks";
 import { getReviews } from "@/actions/reviews/get-reviews";
 import { getReviewStats } from "@/actions/reviews/get-stats";
@@ -9,6 +9,7 @@ import { syncReviews } from "@/actions/reviews/sync-reviews";
 import { StatsCards } from "@/components/dashboard/stats-cards";
 import { Filters } from "@/components/dashboard/filters";
 import { ReviewsTable } from "@/components/dashboard/reviews-table";
+import { SyncStatusAlert } from "@/components/dashboard/sync-status-alert";
 import { Button } from "@/components/ui/button";
 import { useFiltersStore } from "@/store/filters";
 import { useRouter } from "next/navigation";
@@ -19,9 +20,10 @@ export default function DashboardPage() {
   const [properties, setProperties] = useState<
     Array<{ id: string; name: string; hostaway_id: number | null }>
   >([]);
+  const [propertiesLoaded, setPropertiesLoaded] = useState(false);
 
   // Fetch properties
-  const { execute: fetchProperties } = useAction(getProperties, {
+  const { execute: fetchProperties, status: propertiesStatus } = useAction(getProperties, {
     onSuccess: ({ data }) => {
       if (data?.properties) {
         setProperties(
@@ -31,6 +33,7 @@ export default function DashboardPage() {
             hostaway_id: p.hostaway_id
           }))
         );
+        setPropertiesLoaded(true);
       }
     },
   });
@@ -50,7 +53,11 @@ export default function DashboardPage() {
   } = useAction(getReviews);
 
   // Sync reviews
-  const { execute: executeSyncReviews, status: syncStatus, result: syncResult } = useAction(
+  const {
+    execute: executeSyncReviews,
+    status: syncStatus,
+    result: syncResult,
+  } = useAction(
     syncReviews,
     {
       onSuccess: ({ data }) => {
@@ -63,7 +70,8 @@ export default function DashboardPage() {
     }
   );
 
-  const loadData = () => {
+  // Memoized loadData function to prevent unnecessary re-renders
+  const loadData = useCallback(() => {
     fetchStats({});
     fetchReviews({
       propertyId: filters.propertyId,
@@ -81,16 +89,9 @@ export default function DashboardPage() {
       page: filters.page,
       limit: filters.limit,
     });
-  };
-
-  useEffect(() => {
-    fetchProperties();
-    loadData();
-  }, []);
-
-  useEffect(() => {
-    loadData();
   }, [
+    fetchStats,
+    fetchReviews,
     filters.propertyId,
     filters.source,
     filters.channel,
@@ -106,6 +107,18 @@ export default function DashboardPage() {
     filters.page,
     filters.limit,
   ]);
+
+  // Load properties only once on mount
+  useEffect(() => {
+    if (!propertiesLoaded) {
+      fetchProperties();
+    }
+  }, [propertiesLoaded, fetchProperties]);
+
+  // Load data when filters change
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const stats = statsResult?.data || {
     totalReviews: 0,
@@ -158,20 +171,8 @@ export default function DashboardPage() {
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-        {/* Sync Result */}
-        {syncResult?.data && (
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <h3 className="text-sm font-medium text-green-800 mb-2">
-              ✅ Sync Completed Successfully
-            </h3>
-            <div className="text-sm text-green-700">
-              <p>New reviews: {syncResult.data.summary.new}</p>
-              <p>Updated reviews: {syncResult.data.summary.updated}</p>
-              <p>Errors: {syncResult.data.summary.errors}</p>
-              <p>Total processed: {syncResult.data.summary.total}</p>
-            </div>
-          </div>
-        )}
+        {/* Sync Status Alert */}
+        <SyncStatusAlert syncResult={syncResult} />
 
         {/* Stats */}
         {statsStatus === "executing" ? (

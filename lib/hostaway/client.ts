@@ -3,6 +3,12 @@ import {
   HostawayReviewsResponse,
   HostawayAuthResponse,
 } from "./types";
+import {
+  HostawayError,
+  HostawayErrorType,
+  parseHostawayHttpError,
+  parseNetworkError,
+} from "./errors";
 import mockReviews from "@/public/mock-reviews.json";
 
 export class HostawayClient {
@@ -28,10 +34,13 @@ export class HostawayClient {
       return this.accessToken;
     }
 
-    // If credentials are not configured, return empty token (will use mock data)
+    // If credentials are not configured, throw error
     if (!this.clientId || !this.clientSecret) {
-      console.warn("Hostaway credentials not configured, using mock data");
-      return "";
+      throw new HostawayError(
+        HostawayErrorType.CREDENTIALS_NOT_CONFIGURED,
+        "Hostaway API credentials (Client ID and Client Secret) are not configured in environment variables",
+        { usingMockData: true }
+      );
     }
 
     try {
@@ -48,22 +57,36 @@ export class HostawayClient {
       });
 
       if (!response.ok) {
-        throw new Error(`Authentication failed: ${response.statusText}`);
+        throw parseHostawayHttpError(response, "Authentication");
       }
 
       const data: HostawayAuthResponse = await response.json();
+
+      if (!data.access_token) {
+        throw new HostawayError(
+          HostawayErrorType.INVALID_RESPONSE,
+          "Authentication response missing access token"
+        );
+      }
+
       this.accessToken = data.access_token;
       this.tokenExpiry = Date.now() + data.expires_in * 1000;
 
       return this.accessToken;
     } catch (error) {
-      console.error("Hostaway authentication error:", error);
-      throw error;
+      // If it's already a HostawayError, re-throw it
+      if (error instanceof HostawayError) {
+        throw error;
+      }
+
+      // Otherwise, parse as network error
+      throw parseNetworkError(error);
     }
   }
 
   /**
-   * Fetch reviews from Hostaway API or mock data
+   * Fetch reviews from Hostaway API
+   * Throws HostawayError on failure - caller decides whether to use mock data
    */
   async getReviews(params: {
     listingId?: number;
@@ -72,13 +95,8 @@ export class HostawayClient {
     status?: string;
   }): Promise<HostawayReview[]> {
     try {
+      // This will throw HostawayError if credentials not configured
       const token = await this.authenticate();
-
-      console.log("token:", token);
-      // If no token, use mock data
-      if (!token) {
-        return this.getMockReviews(params);
-      }
 
       const queryParams = new URLSearchParams();
       if (params.listingId)
@@ -98,24 +116,35 @@ export class HostawayClient {
       );
 
       if (!response.ok) {
-        console.warn("Hostaway API request failed, falling back to mock data");
-        return this.getMockReviews(params);
+        throw parseHostawayHttpError(response, "Fetch reviews");
       }
 
       const data: HostawayReviewsResponse = await response.json();
-      console.log("data:", data);
+
+      if (!data.result || !Array.isArray(data.result)) {
+        throw new HostawayError(
+          HostawayErrorType.INVALID_RESPONSE,
+          "Invalid response format from Hostaway API"
+        );
+      }
+
       return data.result;
     } catch (error) {
-      console.error("Error fetching Hostaway reviews:", error);
-      // Fallback to mock data on error
-      return this.getMockReviews(params);
+      // If it's already a HostawayError, re-throw it
+      if (error instanceof HostawayError) {
+        throw error;
+      }
+
+      // Otherwise, parse as network error
+      throw parseNetworkError(error);
     }
   }
 
   /**
    * Get mock reviews (fallback when API is not available)
+   * Public method so it can be called explicitly when handling errors
    */
-  private getMockReviews(params: {
+  getMockReviews(params: {
     listingId?: number;
     startDate?: string;
     endDate?: string;

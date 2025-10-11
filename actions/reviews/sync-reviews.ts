@@ -4,6 +4,7 @@ import { authActionClient } from "@/lib/safe-action";
 import { prisma } from "@/lib/db/client";
 import { hostawayClient } from "@/lib/hostaway/client";
 import { normalizeHostawayReviews } from "@/lib/hostaway/normalizer";
+import { HostawayError } from "@/lib/hostaway/errors";
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 
@@ -16,28 +17,45 @@ export const syncReviews = authActionClient
   .metadata({ actionName: "syncReviews" })
   .inputSchema(syncReviewsSchema)
   .action(async ({ parsedInput }) => {
-    console.log("Syncing reviews...");
     const { propertyId, listingId } = parsedInput;
 
     let newCount = 0;
     let updatedCount = 0;
     let errorCount = 0;
+    let hostawayError: HostawayError | null = null;
+    let usingMockData = false;
 
+    // Try to fetch reviews from Hostaway API
+    let hostawayReviews;
     try {
-      // Fetch reviews from Hostaway
-      const hostawayReviews = await hostawayClient.getReviews({
+      hostawayReviews = await hostawayClient.getReviews({
         listingId,
       });
+    } catch (error) {
+      // Handle Hostaway errors
+      if (error instanceof HostawayError) {
+        hostawayError = error;
 
-      console.log("hostawayReviews:", hostawayReviews);
+        // If error suggests using mock data, use it
+        if (error.shouldUseMockData()) {
+          console.warn(`Hostaway API error (${error.type}), using mock data:`, error.message);
+          hostawayReviews = hostawayClient.getMockReviews({ listingId });
+          usingMockData = true;
+        } else {
+          // For non-recoverable errors, throw with user-friendly message
+          throw new Error(error.getUserMessage());
+        }
+      } else {
+        // Unknown error, re-throw
+        throw error;
+      }
+    }
 
-      // Normalize reviews
-      const normalizedReviews = normalizeHostawayReviews(
-        hostawayReviews,
-        propertyId
-      );
-
-      console.log("normalizedReviews:", normalizedReviews)
+    // Normalize reviews
+    const normalizedReviews = normalizeHostawayReviews(
+      hostawayReviews,
+      propertyId
+    );
 
       // Sync each review to database
       for (const reviewData of normalizedReviews) {
@@ -92,27 +110,29 @@ export const syncReviews = authActionClient
         }
       }
 
-      // Revalidate pages
-      revalidatePath("/dashboard");
-      const property = await prisma.property.findUnique({
-        where: { id: propertyId },
-      });
-      if (property) {
-        revalidatePath(`/properties/${property.slug}`);
-      }
-
-      return {
-        success: true,
-        summary: {
-          new: newCount,
-          updated: updatedCount,
-          errors: errorCount,
-          total: normalizedReviews.length,
-        },
-      };
-    } catch (error) {
-      console.error("Error syncing reviews:", error);
-      throw new Error("Failed to sync reviews");
+    // Revalidate pages
+    revalidatePath("/dashboard");
+    const property = await prisma.property.findUnique({
+      where: { id: propertyId },
+    });
+    if (property) {
+      revalidatePath(`/properties/${property.slug}`);
     }
+
+    return {
+      success: true,
+      usingMockData,
+      hostawayError: hostawayError ? {
+        type: hostawayError.type,
+        message: hostawayError.getUserMessage(),
+        isRecoverable: hostawayError.isRecoverable(),
+      } : null,
+      summary: {
+        new: newCount,
+        updated: updatedCount,
+        errors: errorCount,
+        total: normalizedReviews.length,
+      },
+    };
   });
 

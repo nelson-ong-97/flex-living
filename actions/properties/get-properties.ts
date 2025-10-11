@@ -8,6 +8,7 @@ import { z } from "zod";
 export const getProperties = actionClient
   .metadata({ actionName: "getProperties" })
   .action(async () => {
+    // Fetch all properties with review counts
     const properties = await prisma.property.findMany({
       orderBy: {
         name: "asc",
@@ -25,27 +26,29 @@ export const getProperties = actionClient
       },
     });
 
-    // Calculate average rating for each property
-    const propertiesWithStats = await Promise.all(
-      properties.map(async (property) => {
-        const avgRating = await prisma.review.aggregate({
-          where: {
-            propertyId: property.id,
-            approved: true,
-            rating: { not: null },
-          },
-          _avg: {
-            rating: true,
-          },
-        });
+    // Get average ratings for all properties in a single query using groupBy
+    const avgRatings = await prisma.review.groupBy({
+      by: ['propertyId'],
+      where: {
+        approved: true,
+        rating: { not: null },
+      },
+      _avg: {
+        rating: true,
+      },
+    });
 
-        return {
-          ...property,
-          averageRating: avgRating._avg.rating || 0,
-          reviewCount: property._count.reviews,
-        };
-      })
+    // Create a map for quick lookup
+    const avgRatingsMap = new Map(
+      avgRatings.map(item => [item.propertyId, item._avg.rating || 0])
     );
+
+    // Combine properties with their average ratings
+    const propertiesWithStats = properties.map(property => ({
+      ...property,
+      averageRating: avgRatingsMap.get(property.id) || 0,
+      reviewCount: property._count.reviews,
+    }));
 
     return {
       properties: propertiesWithStats,
