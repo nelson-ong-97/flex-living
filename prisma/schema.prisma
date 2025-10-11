@@ -1,0 +1,79 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl =  env("DIRECT_URL")
+}
+
+model Property {
+  id              String   @id @default(cuid())
+  name            String
+  slug            String   @unique
+  address         String?
+  googlePlaceId   String?  @unique
+  hostaway_id     Int?     @unique
+  imageUrl        String?
+  description     String?
+  reviews         Review[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Review {
+  id              String   @id @default(cuid())
+  propertyId      String
+  property        Property @relation(fields: [propertyId], references: [id])
+
+  // Source tracking
+  source          String   // 'hostaway', 'google'
+  externalId      String   // Original review ID
+
+  // Review content
+  guestName       String
+  rating          Float?   // Overall rating (1-10 or 1-5)
+  publicReview    String?
+
+  // Categories (for Hostaway)
+  cleanliness     Int?
+  communication   Int?
+  accuracy        Int?
+  location        Int?
+  checkin         Int?
+  value           Int?
+  respectRules    Int?
+
+  // Metadata
+  channel         String?  // 'airbnb', 'booking.com', etc.
+  type            String?  // 'guest-to-host', 'host-to-guest'
+  status          String   // 'published', 'pending', etc.
+  submittedAt     DateTime
+
+  // Manager controls
+  approved        Boolean  @default(false)
+  featured        Boolean  @default(false)
+  displayOrder    Int?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([source, externalId])
+  @@index([propertyId, approved])
+  @@index([rating])
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  role      String   @default("manager") // 'admin', 'manager'
+  createdAt DateTime @default(now())
+}
